@@ -143,7 +143,7 @@ Test Infected = I need tests to clarify when is done: the bug, the feature.
   - https://archive.org/details/est-driven-development-by-example/test-driven-development-by-example/
 - Still works now, also with AI
 - Part of eXtreme Programming practices:
-  ![xp practices](xp-practices)
+  ![xp practices](xp-practices.png)
 
 ### 1.3 TDD Cycle: RED-GREEN-REFACTOR
 
