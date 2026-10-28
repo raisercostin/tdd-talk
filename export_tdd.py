@@ -219,6 +219,9 @@ def inline(text: str) -> str:
 
 
 def block_html(block: str) -> str:
+    fenced = re.fullmatch(r"```([^\n]*)\n(.*?)\n?```", block.strip(), re.S)
+    if fenced:
+        return f'<pre class="source-code"><code class="language-{html.escape(fenced[1], quote=True)}">{html.escape(fenced[2])}</code></pre>'
     lines = block.splitlines()
     main = re.match(r"^(- |\d+\. )(.*)$", lines[0])
     quote = lines[0].startswith("> ")
@@ -254,6 +257,23 @@ def block_html(block: str) -> str:
     if quote:
         return f'<blockquote>{inline(block.removeprefix("> "))}</blockquote>'
     return f'<p>{inline(block).replace(chr(10), "<br>")}</p>'
+
+
+FENCE = re.compile(r"```([^\n]*)\n(.*?)\n?```", re.S)
+
+
+def separate_code(item: Slide):
+    code = []
+    text_stages = []
+    for stage, blocks in enumerate(item.stages or [item.blocks]):
+        raw = "\n\n".join(blocks)
+        for language, content in FENCE.findall(raw):
+            if language.strip() != "mermaid":
+                code.append((stage, language.strip(), content))
+        raw = FENCE.sub("", raw)
+        text_stages.append(make_blocks(raw.splitlines()))
+    text_blocks = [block for group in text_stages for block in group]
+    return code, Slide(item.title, item.section, "\n\n".join(text_blocks), text_blocks, False, text_stages)
 
 
 # Shared coordinates: native PowerPoint shapes and offline SVG use the same graph.
@@ -311,7 +331,7 @@ def body_lines(item: Slide):
             yield prefix + label, url, raw, j
 
 
-def body_height(item: Slide, size: int, width: float) -> float:
+def body_height(item: Slide, size: int, width: float, compact=False) -> float:
     try:
         font = ImageFont.truetype("arial.ttf", size * 4)
     except OSError:
@@ -326,14 +346,14 @@ def body_height(item: Slide, size: int, width: float) -> float:
                 current = word
             else:
                 current = proposed
-        height += wrapped * size * 1.25 + (12 if j == 0 else 7)
+        height += wrapped * size * (1.12 if compact else 1.25) + ((.5 if j == 0 else 0) if compact else (12 if j == 0 else 7))
     return height / 72
 
 
-def body_font_size(item: Slide, width=11.54, height_inches=4.45, minimum=18) -> int:
+def body_font_size(item: Slide, width=11.54, height_inches=4.45, minimum=18, compact=False) -> int:
     # Fit the complete revealed state, rather than just the initial content.
     for size in range(24, minimum - 1, -1):
-        if body_height(item, size, width) <= height_inches:
+        if body_height(item, size, width, compact) <= height_inches:
             return size
     raise ValueError(f"Slide needs to be split further: {item.title}")
 
@@ -370,11 +390,17 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
         textbox(slide, .7, .85, 11.9, 1.05, item.title, 34, bold=True)
         reveal_targets: dict[int, list[int]] = {}
         if item.diagram:
-            sx, sy = 11.5 / 1050, 4.65 / 600
+            _, prose = separate_code(item)
+            has_prose = bool(prose.blocks)
+            if has_prose:
+                size = body_font_size(prose, 3.74, 4.5, 12)
+                textbox(slide, .85, 2.05, 3.8, 4.65, "\n".join(text for text, _, _, _ in body_lines(prose)), size)
+            ox = 4.8 if has_prose else .8
+            sx, sy = (7.7 if has_prose else 11.5) / 1050, 4.65 / 600
             for parent, child in EDGES:
                 x1, y1, _ = NODES[parent]
                 x2, y2, _ = NODES[child]
-                edge = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(.8 + x1*sx), Inches(2 + (y1+28)*sy), Inches(.8 + x2*sx), Inches(2 + (y2-28)*sy))
+                edge = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(ox + x1*sx), Inches(2 + (y1+28)*sy), Inches(ox + x2*sx), Inches(2 + (y2-28)*sy))
                 edge.line.color.rgb = RGBColor.from_string(BLUE)
                 edge.line.width = Pt(1.5)
                 arrow = OxmlElement("a:tailEnd")
@@ -383,7 +409,7 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
                 if child == "1.3.2b":
                     edge.line.dash_style = MSO_LINE_DASH_STYLE.DASH
             for key, (x, y, label) in NODES.items():
-                shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(.8+(x-93)*sx), Inches(2+(y-28)*sy), Inches(186*sx), Inches(56*sy))
+                shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(ox+(x-93)*sx), Inches(2+(y-28)*sy), Inches(186*sx), Inches(56*sy))
                 shape.fill.solid()
                 shape.fill.fore_color.rgb = RGBColor.from_string(PANEL)
                 shape.line.color.rgb = RGBColor.from_string(BLUE)
@@ -392,17 +418,34 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
                 p.alignment = PP_ALIGN.CENTER
                 p.text = label
                 p.font.name = "Arial"
-                p.font.size = Pt(17)
+                p.font.size = Pt(12 if has_prose else 17)
                 p.font.color.rgb = RGBColor.from_string(FG)
                 if key == "1.3.2":
                     for run in p.runs:
                         run._r.get_or_add_rPr().set("strike", "sngStrike")
         else:
             images, text_item = images_and_text(item, source)
+            code, text_item = separate_code(text_item)
+            compact = bool(code) or bool(images and item.stages and len(item.stages) > 1)
             comparison_blocks = [block for block in text_item.blocks if block.startswith(("- Human", "- AI"))]
             comparison = len(comparison_blocks) == 2
             regions = [(text_item, .85, 11.6)]
-            if comparison:
+            if code:
+                regions = [(text_item, .85, 5.7)]
+                for stage, language, content in code:
+                    # Preserve Java indentation in a separate editable code panel.
+                    for font_size in range(14, 7, -1):
+                        font = ImageFont.truetype("consola.ttf", font_size * 4)
+                        if max(font.getlength(line) for line in content.splitlines()) <= 5.8 * 288 and len(content.splitlines()) * font_size * 1.1 <= 4.5 * 72:
+                            break
+                    box = textbox(slide, 6.7, 2.05, 5.8, 4.65, content, font_size)
+                    for p in box.text_frame.paragraphs:
+                        p.font.name = "Consolas"
+                        p.line_spacing = 1.05
+                        p.space_before = p.space_after = Pt(0)
+                    if stage:
+                        reveal_targets.setdefault(stage, []).append(box.shape_id)
+            elif comparison:
                 prefix = [block for block in text_item.blocks if block not in comparison_blocks]
                 regions = []
                 if prefix:
@@ -418,13 +461,13 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
                     pic = slide.shapes.add_picture(str(path), Inches(.85), Inches(2.05+n*4.5/len(images)), width=Inches(iw*scale), height=Inches(ih*scale))
                     pic._element.nvPicPr.cNvPr.set("descr", alt)
             for text_item, x, width in regions:
-                size = body_font_size(text_item, width-.06, 4.45, 12)
+                size = body_font_size(text_item, width-.06, 4.5 if compact else 4.45, 9 if compact else 12, compact)
                 y = 2.05
                 for stage, blocks in enumerate(text_item.stages or [text_item.blocks]):
                     if not blocks:
                         continue
                     stage_item = Slide(item.title, item.section, "\n\n".join(blocks), blocks)
-                    height = body_height(stage_item, size, width-.06) + .04
+                    height = body_height(stage_item, size, width-.06, compact) + .04
                     box = textbox(slide, x, y, width, height, "", 23)
                     y += height
                     if stage:
@@ -438,9 +481,9 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
                         p.font.name = "Arial"
                         p.font.size = Pt(size)
                         p.font.color.rgb = RGBColor.from_string(BLUE if url else FG)
-                        p.line_spacing = 1.2
-                        p.space_before = Pt(9 if j == 0 else 4)
-                        p.space_after = Pt(3)
+                        p.line_spacing = 1.05 if compact else 1.2
+                        p.space_before = Pt((.5 if j == 0 else 0) if compact else (9 if j == 0 else 4))
+                        p.space_after = Pt(0 if compact else 3)
                         if "~~" in raw:
                             for run in p.runs:
                                 run._r.get_or_add_rPr().set("strike", "sngStrike")
@@ -464,10 +507,13 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
     extra_css = """
   * { box-sizing: border-box; }
   #sidebar { flex: 0 0 260px; }
+  #sidebar[hidden] { display: none; }
   #main { min-width: 0; min-height: 0; }
   #content { min-height: 0; }
   #nav { display: grid; }
-  button.slide-link { text-align: left; border: 0; border-bottom: 1px solid #222733; background: transparent; }
+  button.slide-link { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; text-align: left; border: 0; border-bottom: 1px solid #222733; background: transparent; }
+  .slide-link-title { min-width: 0; overflow-wrap: anywhere; }
+  .slide-link-page { flex: 0 0 auto; margin-left: auto; color: #aaa; font-variant-numeric: tabular-nums; text-align: right; }
   button.slide-link:hover { background: #1f2633; }
   button.active-link { background: #27324a; }
   .slide { max-width: 1100px; width: 100%; margin-inline: auto; font-size: clamp(20px, 1.9vw, 26px); line-height: 1.35; overflow-wrap: anywhere; }
@@ -485,13 +531,21 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
   .comparison > div > ul > li { list-style: none; font-weight: bold; }
   .comparison li li { font-weight: normal; }
   .dense { font-size: .85em; }
+  .source-code { font-family: Consolas, monospace; font-size: 14px; line-height: 1.45; white-space: pre; overflow-x: auto; padding: 16px; background: #0b0d12; border-left: 3px solid #4aa3ff; }
+  .diagram-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
   .reveal[hidden] { display: none !important; }
   .staged-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 28px; }
   .staged-comparison > .reveal:first-child { font-size: .85em; }
   a { color: #4aa3ff; }
   .tag { font-size: 12px; }
-  #controls { align-items: center; gap: 12px; }
-  #counter { font-size: 13px; color: #aaa; }
+  #presentation-toolbar { display: flex; align-items: center; background: #121621; border-top: 1px solid #2a2f3a; }
+  #view-controls { display: flex; gap: 6px; padding: 10px; padding-right: 0; flex-shrink: 0; }
+  #view-controls button { font-size: 12px; padding: 6px 7px; }
+  #controls { flex: 1; min-width: 0; align-items: center; gap: 12px; border-top: 0; }
+  body.chrome-hidden #header, body.chrome-hidden #controls { display: none; }
+  body.chrome-hidden #presentation-toolbar { position: fixed; bottom: 10px; left: 10px; z-index: 10; background: transparent; border: 0; }
+  body.chrome-hidden #view-controls { padding: 0; }
+  #counter { flex: 1; min-width: 0; text-align: center; font-size: 13px; color: #aaa; }
   button:disabled { opacity: .4; cursor: default; }
   button:focus-visible, a:focus-visible { outline: 2px solid #4aa3ff; outline-offset: 3px; }
   @media (max-width: 760px) {
@@ -501,16 +555,18 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
     #content { padding: 20px 16px; }
     #header h1 { font-size: 14px; }
     #controls { gap: 6px; }
+    #presentation-toolbar { flex-wrap: wrap; }
+    #controls { flex-basis: 100%; }
     #controls button { font-size: 12px; padding: 6px 7px; }
     #counter { font-size: 11px; }
     .slide { font-size: 18px; }
     .slide h2 { font-size: 28px; }
-    .media-layout, .comparison, .staged-comparison { grid-template-columns: minmax(0, 1fr); }
+    .media-layout, .comparison, .staged-comparison, .diagram-layout { grid-template-columns: minmax(0, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) { .slide { animation: none; } }
   @media print {
     body { display: block; height: auto; overflow: visible; background: white; color: black; }
-    #sidebar, #header, #controls { display: none; }
+    #sidebar, #header, #controls, #presentation-toolbar { display: none; }
     #main, #content { display: block; overflow: visible; padding: 0; }
     .slide { display: block !important; break-after: page; padding: 20px; font-size: 20px; animation: none; }
     .slide:last-child { break-after: auto; }
@@ -522,6 +578,10 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
 """
     def stage_html(item, blocks):
         part = Slide(item.title, item.section, "\n\n".join(blocks), blocks)
+        has_diagram = "```mermaid" in part.source
+        if has_diagram:
+            raw = FENCE.sub(lambda m: "" if m[1].strip() == "mermaid" else m[0], part.source)
+            part = Slide(item.title, item.section, raw, make_blocks(raw.splitlines()))
         images, text_item = images_and_text(part, source)
         body = "".join(block_html(block) for block in text_item.blocks)
         comparison = len(text_item.blocks) == 2 and text_item.blocks[0].startswith("- Human") and text_item.blocks[1].startswith("- AI")
@@ -532,8 +592,8 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
         if images:
             pictures = ''.join(f'<img src="data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}" alt="{html.escape(alt, quote=True)}">' for alt, path, mime, dimensions in images)
             body = f'<div class="media-layout"><div>{pictures}</div><div class="slide-text">{body}</div></div>'
-        if item.diagram:
-            body = diagram_svg()
+        if has_diagram:
+            body = f'<div class="diagram-layout"><div>{body}</div>{diagram_svg()}</div>' if part.source.strip() else diagram_svg()
         return body
 
     sections = []
@@ -557,7 +617,13 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
 <main id="main">
   <header id="header"><h1>{html.escape(title)}</h1><small>{html.escape(metadata(slides))}</small><div id="progressBar" role="progressbar" aria-label="Presentation progress" aria-valuemin="1" aria-valuemax="{len(slides)}"><div id="progress"></div></div></header>
   <div id="content">{''.join(sections)}</div>
-  <footer id="controls"><button id="prev" type="button">⬅ Prev</button><span id="counter" aria-live="polite"></span><button id="next" type="button">Next ➡</button></footer>
+  <div id="presentation-toolbar">
+    <div id="view-controls" role="group" aria-label="Presentation view">
+      <button id="toggle-outline" type="button" aria-controls="sidebar" aria-expanded="true">Hide outline</button>
+      <button id="toggle-chrome" type="button" aria-controls="header controls" aria-expanded="true">Hide header/footer</button>
+    </div>
+    <footer id="controls"><button id="prev" type="button">⬅ Prev</button><span id="counter" aria-live="polite"></span><button id="next" type="button">Next ➡</button></footer>
+  </div>
 </main>
 <script>
 const titles = {titles};
@@ -565,11 +631,29 @@ const slides = [...document.querySelectorAll('.slide')];
 const stages = slides.map(slide => [...slide.querySelectorAll('[data-reveal]')]);
 const revealed = slides.map(() => 0);
 const nav = document.getElementById('nav');
+const sidebar = document.getElementById('sidebar');
+const outlineButton = document.getElementById('toggle-outline');
+const chromeButton = document.getElementById('toggle-chrome');
+outlineButton.addEventListener('click', () => {{
+  sidebar.hidden = !sidebar.hidden;
+  outlineButton.textContent = sidebar.hidden ? 'Show outline' : 'Hide outline';
+  outlineButton.setAttribute('aria-expanded', String(!sidebar.hidden));
+}});
+chromeButton.addEventListener('click', () => {{
+  const hidden = document.body.classList.toggle('chrome-hidden');
+  chromeButton.textContent = hidden ? 'Show header/footer' : 'Hide header/footer';
+  chromeButton.setAttribute('aria-expanded', String(!hidden));
+}});
 let index = 0;
 titles.forEach((title, i) => {{
   const button = document.createElement('button');
   button.type = 'button'; button.className = 'slide-link';
-  button.textContent = `${{i + 1}}. ${{title}}`;
+  const titleLabel = document.createElement('span');
+  titleLabel.className = 'slide-link-title'; titleLabel.textContent = title;
+  const pageLabel = document.createElement('span');
+  pageLabel.className = 'slide-link-page'; pageLabel.textContent = i + 1;
+  button.append(titleLabel, pageLabel);
+  button.setAttribute('aria-label', `${{title}}, page ${{i + 1}}`);
   button.addEventListener('click', () => go(i));
   nav.appendChild(button);
 }});

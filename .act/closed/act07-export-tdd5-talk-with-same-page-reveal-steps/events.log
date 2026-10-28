@@ -1,0 +1,5 @@
+- 2026-10-28T11:25:57+02 #actor/actor01 created title="Export tdd5 talk with same-page reveal steps"
+- 2026-10-28T11:25:57+02 #actor/actor01 moved parent="act01"
+- 2026-10-28T11:28:35+02 #actor/actor01 started duration="PT4H" expires-unix="1793194115"
+- 2026-10-28T11:41:25+02 #actor/actor01 added content="index.md"
+- 2026-10-28T11:42:12+02 #actor/actor01 closed reason="Created tdd5-talk.html and tdd5-talk.pptx with 20 pages and 25 steps"

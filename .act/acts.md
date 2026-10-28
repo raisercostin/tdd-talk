@@ -1,7 +1,9 @@
 # Acts
 
 - [ ] `act01` Create TDD presentation #contains/act01/act02 #contains/act01/act03 #contains/act01/act04 #contains/act01/act05 #status/open
-  - [ ] `act07` Export tdd5 talk with same-page reveal steps #doing/actor01 #lease-start/1793179715 #lease-duration/PT4H #status/doing
+  - [x] `act09` Toggle the HTML presentation header and footer #status/closed
+  - [x] `act08` Toggle the HTML presentation outline beside Prev #status/closed
+  - [x] `act07` Export tdd5 talk with same-page reveal steps #status/closed
   - [ ] `act06` Export tdd4 talk to HTML and PowerPoint #doing/actor01 #lease-start/1793171308 #lease-duration/PT2H #status/doing
   - [x] `act05` Create HTML presentation following July reference #contains/act01/act05 #status/closed
   - [x] `act04` Export current TDD presentation to PowerPoint #contains/act01/act04 #status/closed
@@ -47,10 +49,19 @@
 ### act06
 - 2026-10-28T09:08:28+02 #actor/actor01 started duration="PT2H" expires-unix="1793178508"
 
-### act07
-- 2026-10-28T11:25:57+02 #actor/actor01 created title="Export tdd5 talk with same-page reveal steps"
-- 2026-10-28T11:25:57+02 #actor/actor01 moved parent="act01"
-- 2026-10-28T11:28:35+02 #actor/actor01 started duration="PT4H" expires-unix="1793194115"
+### act08
+- 2026-10-28T11:45:53+02 #actor/actor01 created title="Toggle the HTML presentation outline beside Prev"
+- 2026-10-28T11:45:53+02 #actor/actor01 moved parent="act01"
+- 2026-10-28T11:46:04+02 #actor/actor01 started duration="PT2H" expires-unix="1793187964"
+- 2026-10-28T11:48:32+02 #actor/actor01 updated title="Add HTML outline and header-footer visibility controls"
+- 2026-10-28T12:01:32+02 #actor/actor01 updated title="Toggle the HTML presentation outline beside Prev"
+- 2026-10-28T12:17:48+02 #actor/actor01 closed reason="Added and browser-verified outline collapse/restore, expanded content width and preserved page/reveal state"
+
+### act09
+- 2026-10-28T12:01:32+02 #actor/actor01 created title="Toggle the HTML presentation header and footer"
+- 2026-10-28T12:01:32+02 #actor/actor01 moved parent="act01"
+- 2026-10-28T12:17:48+02 #actor/actor01 started duration="PT2H" expires-unix="1793189868"
+- 2026-10-28T12:25:35+02 #actor/actor01 closed reason="Added independent header/footer visibility button and persistent restore controls, verified all visibility combinations on desktop and mobile and navigation while hidden"
 
 ## Graph
 
@@ -62,6 +73,8 @@
 | `contains` | `act01` | `act05` |
 | `contains` | `act01` | `act06` |
 | `contains` | `act01` | `act07` |
+| `contains` | `act01` | `act08` |
+| `contains` | `act01` | `act09` |
 
 ```mermaid
 flowchart LR
@@ -72,10 +85,14 @@ flowchart LR
   act05["act05 Create HTML presentation following July reference"]
   act06["act06 Export tdd4 talk to HTML and PowerPoint"]
   act07["act07 Export tdd5 talk with same-page reveal steps"]
+  act08["act08 Toggle the HTML presentation outline beside Prev"]
+  act09["act09 Toggle the HTML presentation header and footer"]
   act01 -->|contains| act02
   act01 -->|contains| act03
   act01 -->|contains| act04
   act01 -->|contains| act05
   act01 -->|contains| act06
   act01 -->|contains| act07
+  act01 -->|contains| act08
+  act01 -->|contains| act09
 ```

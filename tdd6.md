@@ -345,10 +345,157 @@ Clear errors provide guidance. See Git errors.
 ## 2. TDD in the Agentic Era
 
 > The role of tests and developers when working with AI agents.
+(!) Agree on the behavior. Let the agent find a solution. Use the tests to protect the behavior while improving the design. We need to decide what is a good TDD and a good test.
+
+++
+
+- See John Smart presentation - []()
+- Also there a set of skills and prompts on tdd: /discover /acceptance /design /tdd /review
+
+### 2.1 Test smell: cleanup at end
+As in code above even after describing an anathomy of a good test.
+
+```java
+@Test
+void showsChildGroupsWithTheirDirectProjectCounts() {
+    //var directory = ProjectDirectory.of(); //1
+    var directory = ProjectDirectory.of("uat-datasource1"); //2
+
+    try {
+        directory.createGroup("Technology");
+        directory.createGroup("Engineering", "Technology");
+        directory.createGroup("Finance", "Technology");
+
+        directory.addProject("Engineering", "Atlas");
+        directory.addProject("Engineering", "Orion");
+        directory.addProject("Finance", "Ledger");
+
+        assertThat(directory.childGroupsOf("Technology"))
+            .containsExactlyInAnyOrder(
+                GroupSummary.of("Engineering", 2),
+                GroupSummary.of("Finance", 1)
+            );
+    } finally {
+        // Cleanup //3
+        directory.deleteGroupRecursively("Technology");
+    }
+}
+```
+
+### 2.2 Test Smell: reflection-based tests to circumvent private methods.
+> What if the deleteGroupRecursively is private?
+
+```java
+@Test
+void showsChildGroupsWithTheirDirectProjectCounts() throws Exception {
+    var directory = ProjectDirectory.of("uat-datasource1");
+
+    // "Fix": bypass encapsulation to establish the initial state.
+    var cleanup = directory.getClass()
+        .getDeclaredMethod("deleteGroupRecursively", String.class);
+    cleanup.setAccessible(true);
+    cleanup.invoke(directory, "Technology");
+
+    directory.createGroup("Technology");
+
+    assertThat(directory.childGroupsOf("Technology")).isEmpty();
+
+    directory.createGroup("Engineering", "Technology");
+    directory.createGroup("Finance", "Technology");
+
+    directory.addProject("Engineering", "Atlas");
+    directory.addProject("Engineering", "Orion");
+    directory.addProject("Finance", "Ledger");
+
+    assertThat(directory.childGroupsOf("Technology"))
+        .containsExactlyInAnyOrder(
+            GroupSummary.of("Engineering", 2),
+            GroupSummary.of("Finance", 1)
+        );
+}
+```
+
+### 2.3 Mocking
+
+- Mocking database when is simpler to just use a real inmemory or file based transient database
+
++++
+With Mockito, the same test might become this, assuming the directory delegates the query to a repository:
+
+```java
+@Test
+void showsChildGroupsWithTheirDirectProjectCounts() {
+    var repository = mock(ProjectRepository.class);
+    var directory = ProjectDirectory.of(repository);
+
+    when(repository.childGroupsOf("Technology"))
+        .thenReturn(List.of(
+            GroupSummary.of("Engineering", 2),
+            GroupSummary.of("Finance", 1)
+        ));
+
+    assertThat(directory.childGroupsOf("Technology"))
+        .containsExactlyInAnyOrder(
+            GroupSummary.of("Engineering", 2),
+            GroupSummary.of("Finance", 1)
+        );
+}
+```
+
++++
+**Now the test supplies the answer it expects.** It may verify delegation, but it no longer verifies creating groups, assigning projects or calculating their counts. A broken repository query could still pass this test.
+
+If the directory performs the counting itself, the mock could supply raw groups and projects instead. That tests more behavior, but couples the setup to the repository interactions.
+
+Injection itself is useful. **The question is which behavior you replace when you inject a mock.**
+
+### 2.4 Other Test Smell
+
+- Deleting/changing regression tests just to pass.
+- No abstraction.
+
+### 2.5 Other Test Smells that AI agrees on
+
+Many are existing test smells that agents can produce **quickly and convincingly**. Some recognizable examples:
+
+| Smell | What the agent does | Why it is a problem |
+|---|---|---|
+| **Testing its own assumptions** | Generates implementation and tests from the same misunderstanding. | Both agree, but the required behavior is wrong. |
+| **Expected copied from actual** | Runs the implementation and pastes its output into the assertion. | Observed behavior becomes the specification without validation. |
+| **Mocking the answer** | Stubs the repository with exactly the result being asserted. | The behavior supposedly tested has been replaced. |
+| **Mocking the subject** | Stubs the method under test, sometimes through a spy. | The test bypasses the implementation it should exercise. |
+| **Reflection escape hatch** | Accesses private methods or fields to make setup or assertions easier. | The test becomes coupled to internal structure. |
+| **Assertion erosion** | Replaces exact results with `isNotNull()`, `isNotEmpty()` or partial matching. | The test becomes green by losing relevant checks. |
+| **Swallowed failures** | Catches exceptions, logs them and lets the test finish successfully. | Failure no longer produces a red test. |
+| **Skipping obstacles** | Disables a failing test or adds an assumption that skips it. | The suite appears healthy because evidence disappeared. |
+| **Production changes for test convenience** | Adds public setters, test flags or alternate branches solely to accommodate tests. | Test setup starts dictating inappropriate production behavior. |
+| **Testing framework behavior** | Tests getters, constructors or mock responses instead of meaningful application behavior. | More tests create little additional confidence. |
+| **Excessive verification** | Verifies every internal call, call count and order. | Harmless implementation changes break tests. |
+| **Duplicated test machinery** | Generates elaborate builders, fixtures and helpers for a small scenario. | Understanding the test requires understanding another system. |
+| **Timing patches** | Adds sleeps, retries or larger timeouts until a test passes. | Instability is hidden or made slower rather than explained. |
+| **Environment mismatch** | Uses a substitute database whose behavior differs from production. | Passing tests miss relevant query, constraint or transaction behavior. |
+| **Narrow validation presented as complete** | Runs only the new test, or only compilation, then reports success. | Existing regressions remain undiscovered. |
+| **Tests that never ran** | Creates a test outside discovery conventions or uses an excluded tag. | A green build gives no evidence about that test. |
+| **Unreviewed snapshot approval** | Regenerates snapshots after an unexpected failure. | Potential regressions are accepted in bulk. |
+
+The particularly **agentic failure mode** is optimizing for the visible completion signal:
+
+> **"Make the build green" can become "change whatever prevents the build from being green."**
+
+Your agreed boundary test helps establish what must remain true while the agent searches for an implementation.
+
+As you pointed out earlier, **changing assertions, snapshots or test setup is not automatically wrong**. The smell is making the change without explaining which requirement or assumption changed and why.
+
+### 2.6 Guardrails
+
+- First RED test with clear boundary. Design is done here.
+- Make it GREEN while **KEEPING test boundary**: unit, unit api with input/output parameters
+- If is needed to be changed evidence should be given (to human or other agentic role)
+- Just refactor. Unfortunately we still don't have good TRUE REFACTORING tools as MCP. But they might come.
+  - Here we are in the antiquity age: replace, full replace, sed, cat
+- Anyway as we have green in our test and all other tests we at least have localized efect inside unit.
 
 ## 3. TDD The Good, the Bad and the Ugly
-
-> What works well and where things can go wrong at each stage of the cycle.
 
 #### Things that are exposed as bad practices by TDD
 
@@ -357,6 +504,50 @@ Clear errors provide guidance. See Git errors.
 - testing query and command separately
 - changing internal state via methods that are not part of the facade (is a white-box testing smell)
 - tests that are not isolated and depend on the order of execution of other tests (is a white-box testing smell)
+
+## 3. TDD: The Good, the Ugly, the Bad
+
+> What works well and where things can go wrong at each stage of the cycle.
+
+**The Good:** the cycle clarifies behavior, provides feedback and supports changes to the design.
+
+**The Ugly:** we introduce unnecessary constraints, complexity or maintenance.
+
+**The Bad:** we obtain a green result without establishing the intended behavior.
+
+| Stage | The Good | The Bad | The Ugly |
+|---|---|---|---|
+| **RED** | Choose one behavior. Express it through a meaningful boundary. Establish the initial state and confirm the expected failure. | Write tests because a class or method exists. Specify internal interactions. Include irrelevant setup details. | The test never runs, always passes, or fails for an unrelated reason that we mistake for evidence of missing behavior. |
+| **GREEN** | Find a simple working solution. Temporary shortcuts are acceptable. Check existing behaviors too. | Implement speculative requirements or abstractions. Make the step so large that failures become difficult to understand. | Mock the behavior being tested, swallow failures, or weaken expectations solely to accept an incorrect result. |
+| **REFACTOR** | Improve production and test code while preserving behavior. Keep internal restructuring behind the tested boundary. | Leave costly duplication and complexity untouched. Abstract prematurely. Add tests automatically for every extracted internal class. | Change required behavior unintentionally, then update the tests to match and call it refactoring. |
+
+#### Decisions that require judgment
+
+- **Changing or weakening an assertion:** appropriate when the original expectation was wrong or unnecessarily restrictive. Explain which constraint is being removed and why.
+- **Refactoring before implementing the next behavior:** appropriate while existing tests are green. Prepare the structure, then introduce the next behavior.
+- **Deleting a test:** appropriate when its requirement is obsolete or its remaining value does not justify its cost.
+- **Using a test double:** useful for controlling a boundary; check which real behavior it replaces and where that behavior is verified.
+- **Extracting a smaller unit:** useful when a responsibility deserves its own contract. Extracting a private helper does not automatically create that need.
+- **Stopping after GREEN:** cleanup is a judgment about the current design, not a requirement to invent a refactoring after every test.
+
+#### Problems the cycle can expose
+
+| Smell | What the feedback tells us |
+|---|---|
+| **Tests break when internals change, although behavior is preserved.** | Tests may be coupled to implementation details. |
+| **We mock the repository's calculated answer and assert that same answer.** | We may only be checking delegation; the calculation remains unverified. |
+| **A command test verifies `save()` was called; a query test returns a stubbed result.** | Neither establishes that the command's effect can actually be observed through the query. |
+| **We use reflection or private-state manipulation to prepare the test.** | The test bypasses the public boundary and depends on internal structure. Reconsider the boundary or fixture. |
+| **A test passes only after another test or a successful cleanup.** | It does not establish its own preconditions or isolation. |
+| **Writing a small behavior test requires extensive setup.** | The API, fixture or responsibility boundary may need improvement. |
+| **We cannot explain a test without reading implementation code.** | The test may not communicate the behavior it protects. |
+
+#### Questions worth asking during the example
+
+1. **What behavior are we agreeing on?**
+2. **Does this test exercise that behavior, or replace it with a mock?**
+3. **Can we change the implementation without changing the expectation?**
+4. **If the expectation changes, what did we learn that justifies it?**
 
 ## 4. Beyond TDD
 
