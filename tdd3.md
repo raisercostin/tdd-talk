@@ -1,6 +1,6 @@
-# TDD. Where did it all go wrong?
+# TDD Talk Where did it all go wrong?
 
-2026-10-07
+2026-10-28
 
 ## 1. My background
 
@@ -36,7 +36,7 @@ Solution: AI Generated Code and Tests.
 
 - More code
 - Better quality?
-- Bugs fixed through regeneration. Prompt is the new spec. But is it really better?
+- Bugs fixed through regeneration. Prompt is the new spec. Is it better?
 - Manual testing? No test if is regenerated?
 
 ### 2.4 The problem with AI's Tests
@@ -56,6 +56,25 @@ Solution: AI Generated Code and Tests.
 TDD is primary a design tool. As a side effect it produces a regression test suite.
 The good TDD helps:
 - feel safe to refactor (enables YAGNI and OCP)
+
+## 4. RED-GREEN-REFACTOR
+
+RED - Write a test, make it compile, run to confirm it fails.
+  - There are tests that always pass. We want to be sure we first fail (including compilation errors).
+
+GREEN - Write the simplest code to make the test pass.
+  - Sins allowed: hacks, duct tape programming, copy-paste, and other shortcuts are allowed.
+  - YAGNI. Don't overengineer. No analysis paralysis.
+
+REFACTOR - Refactor the code to remove duplication.
+  - Keep the test green.
+  - Respect: YAGNI, OCP, and other principles, no code smells, and other good practices.
+
+
+Different phases have different purposes:
+- RED: prove missing functionality without knowing/passing implementation details
+- GREEN: add new functionality as fast as possible
+- REFACTOR: 
 
 ### What is the unit fron unit testing ?
 
@@ -151,9 +170,12 @@ Usually our tests need first to get access to a unit, then to query it, and fina
    - Cleanup would create the impression that the other tests are safe to run after this one and that they don't need to be isolated. But they do.
    - Cleanup will block investigations of the state of the unit after a test has run.
 
-#### Anathomy of a forked test
+#### Spawning a unit test
 
-So we have a unit test that fails.
+So we have a test that fails.
+We might want to expose an internal detail of the unit and make assertions on it. Is thightly coupled to the implementation internal details. If that sub-unit component is complex or is used in other parts of the system it can become a unit on its own. If is simple the current test should be enough definition of success.
+
+So naturally we will grow the tests on the most complex parts of the unit.
 
 #### Testign Myths
 
@@ -167,11 +189,12 @@ So we have a unit test that fails.
     - database: embedded, in memory or a real one
       - real SQL queries/CRUD also get tested (think that native sql querries)
     - in memory data structures
-- fluent interfaces
-- Refactoring
+- Clean Code
+- Refactoring of Code Smells
   - Open Closed Principle. If we break tests then we don't respect the OCP.
   - A refactor keeps the tests green.
   - We are free to change the implementation details if the tests are green.
+
 
 #### Things that are exposed as bad practices by TDD
 
