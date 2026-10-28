@@ -657,7 +657,9 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
   .tag { font-size: 12px; }
   #presentation-toolbar { display: flex; align-items: center; background: #121621; border-top: 1px solid #2a2f3a; }
   #view-controls { display: flex; gap: 6px; padding: 10px; padding-right: 0; flex-shrink: 0; }
-  #view-controls button { font-size: 12px; padding: 6px 7px; }
+  #view-controls { opacity: .12; }
+  #view-controls:hover, #view-controls:focus-within { opacity: 1; }
+  #view-controls button { font-size: 11px; padding: 4px 6px; background: transparent; border-color: transparent; }
   #controls { flex: 1; min-width: 0; align-items: center; gap: 12px; border-top: 0; }
   body.chrome-hidden #header, body.chrome-hidden #controls { display: none; }
   body.chrome-hidden #presentation-toolbar { position: fixed; bottom: 10px; left: 10px; z-index: 10; background: transparent; border: 0; }
@@ -736,8 +738,8 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
   <div id="content">{''.join(sections)}</div>
   <div id="presentation-toolbar">
     <div id="view-controls" role="group" aria-label="Presentation view">
-      <button id="toggle-outline" type="button" aria-controls="sidebar" aria-expanded="true">Hide outline</button>
-      <button id="toggle-chrome" type="button" aria-controls="header controls" aria-expanded="true">Hide header/footer</button>
+      <button id="toggle-outline" type="button" aria-label="Hide outline" title="Hide outline" aria-controls="sidebar" aria-expanded="true">O</button>
+      <button id="toggle-chrome" type="button" aria-label="Hide header/footer" title="Hide header/footer" aria-controls="header controls" aria-expanded="true">H</button>
     </div>
     <footer id="controls"><button id="prev" type="button">⬅ Prev</button><span id="counter" aria-live="polite"></span><button id="next" type="button">Next ➡</button></footer>
   </div>
@@ -753,12 +755,14 @@ const outlineButton = document.getElementById('toggle-outline');
 const chromeButton = document.getElementById('toggle-chrome');
 outlineButton.addEventListener('click', () => {{
   sidebar.hidden = !sidebar.hidden;
-  outlineButton.textContent = sidebar.hidden ? 'Show outline' : 'Hide outline';
+  outlineButton.title = sidebar.hidden ? 'Show outline' : 'Hide outline';
+  outlineButton.setAttribute('aria-label', outlineButton.title);
   outlineButton.setAttribute('aria-expanded', String(!sidebar.hidden));
 }});
 chromeButton.addEventListener('click', () => {{
   const hidden = document.body.classList.toggle('chrome-hidden');
-  chromeButton.textContent = hidden ? 'Show header/footer' : 'Hide header/footer';
+  chromeButton.title = hidden ? 'Show header/footer' : 'Hide header/footer';
+  chromeButton.setAttribute('aria-label', chromeButton.title);
   chromeButton.setAttribute('aria-expanded', String(!hidden));
 }});
 let index = 0;

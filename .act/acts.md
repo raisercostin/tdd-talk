@@ -1,6 +1,7 @@
 # Acts
 
 - [ ] `act01` Create TDD presentation #contains/act01/act02 #contains/act01/act03 #contains/act01/act04 #contains/act01/act05 #status/open
+  - [x] `act11` Make presentation view controls discreet O and H buttons #status/closed
   - [x] `act10` Export current tdd6 draft to HTML and PowerPoint #status/closed
   - [x] `act09` Toggle the HTML presentation header and footer #status/closed
   - [x] `act08` Toggle the HTML presentation outline beside Prev #status/closed
@@ -70,6 +71,11 @@
 - 2026-10-28T12:45:02+02 #actor/actor01 started duration="PT4H" expires-unix="1793198702"
 - 2026-10-28T12:48:49+02 #actor/actor01 closed reason="Generated latest tdd6-talk.html and tdd6-talk.pptx with 41 pages and 48 steps, checked current source notes, PowerPoint package and HTML startup"
 
+### act11
+- 2026-10-28T12:49:24+02 #actor/actor01 created title="Make presentation view controls discreet O and H buttons"
+- 2026-10-28T12:49:24+02 #actor/actor01 moved parent="act01"
+- 2026-10-28T12:50:14+02 #actor/actor01 closed reason="Changed latest HTML and exporter to O/H controls at 12 percent idle opacity, visible on hover or focus, verified toggles"
+
 ## Graph
 
 | Relation | From | To |
@@ -83,6 +89,7 @@
 | `contains` | `act01` | `act08` |
 | `contains` | `act01` | `act09` |
 | `contains` | `act01` | `act10` |
+| `contains` | `act01` | `act11` |
 
 ```mermaid
 flowchart LR
@@ -96,6 +103,7 @@ flowchart LR
   act08["act08 Toggle the HTML presentation outline beside Prev"]
   act09["act09 Toggle the HTML presentation header and footer"]
   act10["act10 Export current tdd6 draft to HTML and PowerPoint"]
+  act11["act11 Make presentation view controls discreet O and H buttons"]
   act01 -->|contains| act02
   act01 -->|contains| act03
   act01 -->|contains| act04
@@ -105,4 +113,5 @@ flowchart LR
   act01 -->|contains| act08
   act01 -->|contains| act09
   act01 -->|contains| act10
+  act01 -->|contains| act11
 ```
