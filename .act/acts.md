@@ -1,6 +1,7 @@
 # Acts
 
 - [ ] `act01` Create TDD presentation #contains/act01/act02 #contains/act01/act03 #contains/act01/act04 #contains/act01/act05 #status/open
+  - [ ] `act06` Export tdd4 talk to HTML and PowerPoint #doing/actor01 #lease-start/1793171308 #lease-duration/PT2H #status/doing
   - [x] `act05` Create HTML presentation following July reference #contains/act01/act05 #status/closed
   - [x] `act04` Export current TDD presentation to PowerPoint #contains/act01/act04 #status/closed
   - [x] `act03` Recover photo content from context in tdd2.md #contains/act01/act03 #status/closed
@@ -42,6 +43,9 @@
 - 2026-10-20T15:16:37+03 #actor/actor01 started duration="PT1H" expires-unix="1792502197"
 - 2026-10-20T15:22:06+03 #actor/actor01 closed reason="Created offline HTML following July deck and verified all 32 slides, desktop and mobile layout, keyboard and button navigation, links and diagram"
 
+### act06
+- 2026-10-28T09:08:28+02 #actor/actor01 started duration="PT2H" expires-unix="1793178508"
+
 ## Graph
 
 | Relation | From | To |
@@ -50,6 +54,7 @@
 | `contains` | `act01` | `act03` |
 | `contains` | `act01` | `act04` |
 | `contains` | `act01` | `act05` |
+| `contains` | `act01` | `act06` |
 
 ```mermaid
 flowchart LR
@@ -58,8 +63,10 @@ flowchart LR
   act03["act03 Recover photo content from context in tdd2.md"]
   act04["act04 Export current TDD presentation to PowerPoint"]
   act05["act05 Create HTML presentation following July reference"]
+  act06["act06 Export tdd4 talk to HTML and PowerPoint"]
   act01 -->|contains| act02
   act01 -->|contains| act03
   act01 -->|contains| act04
   act01 -->|contains| act05
+  act01 -->|contains| act06
 ```

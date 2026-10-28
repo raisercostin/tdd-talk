@@ -1,25 +1,30 @@
-"""Export tdd3.md to matching editable PowerPoint and offline HTML decks.
+"""Export Markdown to matching editable PowerPoint and offline HTML decks.
 
 Install: python -m pip install -r requirements.txt
 Run:     python export_tdd.py
+         python export_tdd.py --source tdd4.md --output tdd4-talk --section-pages
 """
 
 from __future__ import annotations
 
 import html
+import argparse
+import base64
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PIL import ImageFont
+from PIL import Image, ImageFont
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_LINE_DASH_STYLE
 from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.xmlchemy import OxmlElement
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import nsdecls
 from pptx.util import Inches, Pt
 
 
@@ -35,6 +40,7 @@ class Slide:
     source: str
     blocks: list[str]
     diagram: bool = False
+    stages: list[list[str]] | None = None
 
 
 def clean(text: str) -> str:
@@ -59,8 +65,8 @@ def make_blocks(lines: list[str]) -> list[str]:
     return blocks
 
 
-def read_slides() -> tuple[str, list[Slide]]:
-    text = SOURCE.read_text(encoding="utf-8")
+def read_slides(source: Path = SOURCE) -> tuple[str, list[Slide]]:
+    text = source.read_text(encoding="utf-8")
     lines = text.splitlines()
     title = lines[0].removeprefix("# ")
     slides = [Slide(title, "Presentation", "\n".join(lines[:4]), [lines[2]])]
@@ -117,6 +123,73 @@ def read_slides() -> tuple[str, list[Slide]]:
     return title, slides
 
 
+def read_section_slides(source: Path) -> tuple[str, list[Slide]]:
+    """One page per section; +++ progressively reveals content on that page."""
+    text = source.read_text(encoding="utf-8")
+    # Preparation instructions precede the actual talk and aren't slide content.
+    talk = re.search(r"^# TDD Talk\s*$", text, re.M)
+    if talk:
+        text = text[talk.start():]
+    lines = text.splitlines()
+    title = lines[0].removeprefix("# ")
+    slides: list[Slide] = []
+    headings: dict[int, str] = {}
+    heading, section, body = title, "Presentation", []
+    stages: list[list[str]] = []
+
+    def flush() -> None:
+        groups = stages + ([body] if any(line.strip() for line in body) else [])
+        groups = [group for group in groups if any(line.strip() for line in group)]
+        raw = "\n\n+++\n\n".join("\n".join(group).strip() for group in groups)
+        if raw:
+            blocks = [make_blocks(group) for group in groups]
+            slides.append(Slide(heading, section, raw, [block for group in blocks for block in group], "```mermaid" in raw, blocks))
+
+    for line in lines[1:]:
+        match = re.match(r"^(#{2,6}) (.+)$", line)
+        if match:
+            flush()
+            body, stages = [], []
+            level = len(match[1])
+            heading = title if match[2] == "Content" else match[2]
+            headings = {k: v for k, v in headings.items() if k < level}
+            section = " / ".join(headings.values()) or "Presentation"
+            headings[level] = heading
+        elif line.strip() == "+++":
+            stages.append(body)
+            body = []
+        else:
+            body.append(line)
+    flush()
+    return title, slides
+
+
+IMAGE = re.compile(r"!\[([^]]*)\]\(([^)]+)\)")
+
+
+def images_and_text(item: Slide, source: Path):
+    images = []
+    for alt, name in IMAGE.findall(item.source):
+        path = source.parent / name
+        if not path.is_file() and path.with_suffix(".md").is_file():
+            path = path.with_suffix(".md")
+        if not path.is_file():
+            raise FileNotFoundError(f"Image referenced by {source.name}: {name}")
+        with Image.open(path) as im:
+            mime = Image.MIME[im.format]
+            dimensions = im.size
+        images.append((alt, path, mime, dimensions))
+    raw = IMAGE.sub("", "\n\n".join(item.blocks))
+    stages = [make_blocks(IMAGE.sub("", "\n\n".join(group)).splitlines()) for group in item.stages] if item.stages else None
+    return images, Slide(item.title, item.section, raw, make_blocks(raw.splitlines()), item.diagram, stages)
+
+
+def metadata(slides: list[Slide]):
+    match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", slides[0].source)
+    date = match[0] if match else ""
+    return f"Presenter: Costin Grigore{' · ' + date if date else ''}"
+
+
 def link_parts(text: str) -> tuple[str, str | None]:
     match = re.search(r"https?://\S+", text)
     if not match:
@@ -149,6 +222,13 @@ def block_html(block: str) -> str:
     lines = block.splitlines()
     main = re.match(r"^(- |\d+\. )(.*)$", lines[0])
     quote = lines[0].startswith("> ")
+    if not main and not quote:
+        nested_at = next((i for i, line in enumerate(lines) if re.match(r"^\s+- ", line)), None)
+        if nested_at is not None:
+            import textwrap
+            lead = block_html("\n".join(lines[:nested_at]))
+            children = make_blocks(textwrap.dedent("\n".join(lines[nested_at:])).splitlines())
+            return lead + "".join(block_html(child) for child in children)
     if main:
         numbered = main[1] != "- "
         tag = "ol" if numbered else "ul"
@@ -231,34 +311,56 @@ def body_lines(item: Slide):
             yield prefix + label, url, raw, j
 
 
-def body_font_size(item: Slide) -> int:
-    # Fit actual wrapped text into the fixed PowerPoint content region.
-    for size in range(24, 17, -1):
-        try:
-            font = ImageFont.truetype("arial.ttf", size * 4)
-        except OSError:
-            font = ImageFont.load_default(size=size * 4)
-        height = 0
-        for text, _, _, j in body_lines(item):
-            wrapped, current = 1, ""
-            for word in text.split():
-                proposed = f"{current} {word}".strip()
-                if current and font.getlength(proposed) > 11.54 * 288:
-                    wrapped += 1
-                    current = word
-                else:
-                    current = proposed
-            height += wrapped * size * 1.25 + (12 if j == 0 else 7)
-        if height <= 4.45 * 72:
+def body_height(item: Slide, size: int, width: float) -> float:
+    try:
+        font = ImageFont.truetype("arial.ttf", size * 4)
+    except OSError:
+        font = ImageFont.load_default(size=size * 4)
+    height = 0
+    for text, _, _, j in body_lines(item):
+        wrapped, current = 1, ""
+        for word in text.split():
+            proposed = f"{current} {word}".strip()
+            if current and font.getlength(proposed) > width * 288:
+                wrapped += 1
+                current = word
+            else:
+                current = proposed
+        height += wrapped * size * 1.25 + (12 if j == 0 else 7)
+    return height / 72
+
+
+def body_font_size(item: Slide, width=11.54, height_inches=4.45, minimum=18) -> int:
+    # Fit the complete revealed state, rather than just the initial content.
+    for size in range(24, minimum - 1, -1):
+        if body_height(item, size, width) <= height_inches:
             return size
     raise ValueError(f"Slide needs to be split further: {item.title}")
 
 
-def export_ppt(title: str, slides: list[Slide]) -> None:
+def add_reveal_animations(slide, targets: dict[int, list[int]]) -> None:
+    """Native PowerPoint entrance builds: one click reveals an entire stage."""
+    if not targets:
+        return
+    next_id = 3
+    builds = []
+    for step, shape_ids in sorted(targets.items()):
+        wrapper_id, parallel_id, click_id = next_id, next_id + 1, next_id + 2
+        next_id += 3
+        effects = []
+        for shape_id in shape_ids:
+            effects.append(f'''<p:set><p:cBhvr><p:cTn id="{next_id}" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="{shape_id}"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set>''')
+            next_id += 1
+        builds.append(f'''<p:par><p:cTn id="{wrapper_id}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="{parallel_id}" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst><p:par><p:cTn id="{click_id}" presetID="1" presetClass="entr" presetSubtype="0" fill="hold" nodeType="clickEffect"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>{''.join(effects)}</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>''')
+    timing = f'''<p:timing {nsdecls('p')}><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst><p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>{''.join(builds)}</p:childTnLst></p:cTn><p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst><p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>'''
+    slide._element.append(parse_xml(timing))
+
+
+def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-presentation.pptx", source: Path = SOURCE) -> None:
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
     prs.core_properties.title = title
-    prs.core_properties.subject = "TDD presentation exported from tdd3.md"
+    prs.core_properties.subject = f"TDD presentation exported from {source.name}"
     prs.core_properties.author = "Costin Grigore"
     for index, item in enumerate(slides):
         slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -266,6 +368,7 @@ def export_ppt(title: str, slides: list[Slide]) -> None:
         slide.background.fill.fore_color.rgb = RGBColor.from_string(BG)
         textbox(slide, .7, .3, 11.9, .4, item.section, 12, MUTED)
         textbox(slide, .7, .85, 11.9, 1.05, item.title, 34, bold=True)
+        reveal_targets: dict[int, list[int]] = {}
         if item.diagram:
             sx, sy = 11.5 / 1050, 4.65 / 600
             for parent, child in EDGES:
@@ -295,36 +398,66 @@ def export_ppt(title: str, slides: list[Slide]) -> None:
                     for run in p.runs:
                         run._r.get_or_add_rPr().set("strike", "sngStrike")
         else:
-            box = textbox(slide, .85, 2.05, 11.6, 4.55, "", 23)
-            tf = box.text_frame
-            size = body_font_size(item)
-            first = True
-            for text, url, raw, j in body_lines(item):
-                p = tf.paragraphs[0] if first else tf.add_paragraph()
-                first = False
-                p.text = text
-                p.font.name = "Arial"
-                p.font.size = Pt(size)
-                p.font.color.rgb = RGBColor.from_string(BLUE if url else FG)
-                p.line_spacing = 1.2
-                p.space_before = Pt(9 if j == 0 else 4)
-                p.space_after = Pt(3)
-                if "~~" in raw:
-                    for run in p.runs:
-                        run._r.get_or_add_rPr().set("strike", "sngStrike")
-                if url:
-                    p.runs[0].hyperlink.address = url
-        textbox(slide, .7, 7.0, 10.5, .3, "TDD · Where did it all go wrong?", 10, MUTED)
+            images, text_item = images_and_text(item, source)
+            comparison_blocks = [block for block in text_item.blocks if block.startswith(("- Human", "- AI"))]
+            comparison = len(comparison_blocks) == 2
+            regions = [(text_item, .85, 11.6)]
+            if comparison:
+                prefix = [block for block in text_item.blocks if block not in comparison_blocks]
+                regions = []
+                if prefix:
+                    regions.append((Slide(item.title, item.section, "\n\n".join(prefix), prefix, stages=[prefix]), .85, 3.1))
+                for n, block in enumerate(comparison_blocks):
+                    stage = next((i for i, group in enumerate(text_item.stages or []) if block in group), 0)
+                    groups = [[] for _ in range(stage)] + [[block]]
+                    regions.append((Slide(item.title, item.section, block, [block], stages=groups), 4.15+n*4.15 if prefix else .85+n*6, 4.0 if prefix else 5.6))
+            elif images:
+                regions = [(text_item, 4.4, 8.0)]
+                for n, (alt, path, mime, (iw, ih)) in enumerate(images):
+                    scale = min(3.2 / iw, 4.5 / len(images) / ih)
+                    pic = slide.shapes.add_picture(str(path), Inches(.85), Inches(2.05+n*4.5/len(images)), width=Inches(iw*scale), height=Inches(ih*scale))
+                    pic._element.nvPicPr.cNvPr.set("descr", alt)
+            for text_item, x, width in regions:
+                size = body_font_size(text_item, width-.06, 4.45, 12)
+                y = 2.05
+                for stage, blocks in enumerate(text_item.stages or [text_item.blocks]):
+                    if not blocks:
+                        continue
+                    stage_item = Slide(item.title, item.section, "\n\n".join(blocks), blocks)
+                    height = body_height(stage_item, size, width-.06) + .04
+                    box = textbox(slide, x, y, width, height, "", 23)
+                    y += height
+                    if stage:
+                        reveal_targets.setdefault(stage, []).append(box.shape_id)
+                    tf = box.text_frame
+                    first = True
+                    for text, url, raw, j in body_lines(stage_item):
+                        p = tf.paragraphs[0] if first else tf.add_paragraph()
+                        first = False
+                        p.text = text
+                        p.font.name = "Arial"
+                        p.font.size = Pt(size)
+                        p.font.color.rgb = RGBColor.from_string(BLUE if url else FG)
+                        p.line_spacing = 1.2
+                        p.space_before = Pt(9 if j == 0 else 4)
+                        p.space_after = Pt(3)
+                        if "~~" in raw:
+                            for run in p.runs:
+                                run._r.get_or_add_rPr().set("strike", "sngStrike")
+                        if url:
+                            p.runs[0].hyperlink.address = url
+        textbox(slide, .7, 7.0, 10.5, .3, title, 10, MUTED)
         textbox(slide, 11.6, 7.0, 1.0, .3, f"{index+1} / {len(slides)}", 10, MUTED)
         bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, Inches(7.45), int(prs.slide_width*(index+1)/len(slides)), Inches(.05))
         bar.fill.solid()
         bar.fill.fore_color.rgb = RGBColor.from_string(BLUE)
         bar.line.fill.background()
-        slide.notes_slide.notes_text_frame.text = f"Source: tdd3.md\n\n{item.source}"
-    prs.save(ROOT / "tdd-presentation.pptx")
+        add_reveal_animations(slide, reveal_targets)
+        slide.notes_slide.notes_text_frame.text = f"Source: {source.name}\n\n{item.source}"
+    prs.save(output)
 
 
-def export_html(title: str, slides: list[Slide]) -> None:
+def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-presentation.html", source: Path = SOURCE) -> None:
     # Retain the reference deck's layout, colors, typography and interaction model.
     reference = (ROOT / "2026-07-01--tdd" / "tdd-present1.html").read_text(encoding="utf-8")
     css = re.search(r"<style>(.*?)</style>", reference, re.S)[1]
@@ -345,6 +478,16 @@ def export_html(title: str, slides: list[Slide]) -> None:
   .slide p { margin-block: .6em; }
   .slide blockquote { border-left: 3px solid #4aa3ff; margin: 1em 0; padding-left: 1em; }
   .slide svg { display: block; max-height: calc(100dvh - 330px); width: 100%; min-height: 180px; }
+  .media-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr); gap: 28px; align-items: start; }
+  .media-layout img { max-width: 100%; max-height: 48vh; object-fit: contain; background: white; }
+  .media-layout .slide-text { font-size: .78em; }
+  .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; font-size: .8em; }
+  .comparison > div > ul > li { list-style: none; font-weight: bold; }
+  .comparison li li { font-weight: normal; }
+  .dense { font-size: .85em; }
+  .reveal[hidden] { display: none !important; }
+  .staged-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 28px; }
+  .staged-comparison > .reveal:first-child { font-size: .85em; }
   a { color: #4aa3ff; }
   .tag { font-size: 12px; }
   #controls { align-items: center; gap: 12px; }
@@ -362,6 +505,7 @@ def export_html(title: str, slides: list[Slide]) -> None:
     #counter { font-size: 11px; }
     .slide { font-size: 18px; }
     .slide h2 { font-size: 28px; }
+    .media-layout, .comparison, .staged-comparison { grid-template-columns: minmax(0, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) { .slide { animation: none; } }
   @media print {
@@ -372,12 +516,32 @@ def export_html(title: str, slides: list[Slide]) -> None:
     .slide:last-child { break-after: auto; }
     .tag, a, .slide li > ul { color: inherit; }
     .slide svg { max-height: none; }
+    .reveal[hidden] { display: block !important; }
     @page { size: landscape; margin: 12mm; }
   }
 """
+    def stage_html(item, blocks):
+        part = Slide(item.title, item.section, "\n\n".join(blocks), blocks)
+        images, text_item = images_and_text(part, source)
+        body = "".join(block_html(block) for block in text_item.blocks)
+        comparison = len(text_item.blocks) == 2 and text_item.blocks[0].startswith("- Human") and text_item.blocks[1].startswith("- AI")
+        if comparison:
+            body = '<div class="comparison">' + ''.join(f'<div>{block_html(block)}</div>' for block in text_item.blocks) + '</div>'
+        elif len(part.source) > 700:
+            body = f'<div class="dense">{body}</div>'
+        if images:
+            pictures = ''.join(f'<img src="data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}" alt="{html.escape(alt, quote=True)}">' for alt, path, mime, dimensions in images)
+            body = f'<div class="media-layout"><div>{pictures}</div><div class="slide-text">{body}</div></div>'
+        if item.diagram:
+            body = diagram_svg()
+        return body
+
     sections = []
     for i, item in enumerate(slides):
-        body = diagram_svg() if item.diagram else "".join(block_html(block) for block in item.blocks)
+        groups = item.stages or [item.blocks]
+        body = ''.join(f'<div class="reveal" data-reveal="{step}"{(" hidden" if step else "")}>{stage_html(item, blocks)}</div>' for step, blocks in enumerate(groups))
+        if len(groups) > 1 and any(block.startswith("- Human") for block in item.blocks):
+            body = f'<div class="staged-comparison">{body}</div>'
         sections.append(f'<section class="slide" id="slide-{i+1}" aria-labelledby="title-{i+1}" hidden><div class="tag">{html.escape(item.section)}</div><h2 id="title-{i+1}">{html.escape(item.title)}</h2>{body}</section>')
     titles = json.dumps([item.title for item in slides], ensure_ascii=False).replace("<", "\\u003c")
     page = f"""<!DOCTYPE html>
@@ -391,13 +555,15 @@ def export_html(title: str, slides: list[Slide]) -> None:
 <body>
 <aside id="sidebar" aria-label="Slides"><h2>Slides</h2><nav id="nav" aria-label="Slide navigation"></nav></aside>
 <main id="main">
-  <header id="header"><h1>{html.escape(title)}</h1><small>Presenter: Costin Grigore · 2026-10-07</small><div id="progressBar" role="progressbar" aria-label="Presentation progress" aria-valuemin="1" aria-valuemax="{len(slides)}"><div id="progress"></div></div></header>
+  <header id="header"><h1>{html.escape(title)}</h1><small>{html.escape(metadata(slides))}</small><div id="progressBar" role="progressbar" aria-label="Presentation progress" aria-valuemin="1" aria-valuemax="{len(slides)}"><div id="progress"></div></div></header>
   <div id="content">{''.join(sections)}</div>
   <footer id="controls"><button id="prev" type="button">⬅ Prev</button><span id="counter" aria-live="polite"></span><button id="next" type="button">Next ➡</button></footer>
 </main>
 <script>
 const titles = {titles};
 const slides = [...document.querySelectorAll('.slide')];
+const stages = slides.map(slide => [...slide.querySelectorAll('[data-reveal]')]);
+const revealed = slides.map(() => 0);
 const nav = document.getElementById('nav');
 let index = 0;
 titles.forEach((title, i) => {{
@@ -410,36 +576,51 @@ titles.forEach((title, i) => {{
 const links = [...nav.children];
 function render() {{
   slides.forEach((slide, i) => {{ slide.hidden = i !== index; slide.classList.toggle('active', i === index); }});
+  stages.forEach((groups, i) => groups.forEach((group, step) => {{ group.hidden = step > revealed[i]; }}));
   links.forEach((link, i) => {{
     link.classList.toggle('active-link', i === index);
     if (i === index) link.setAttribute('aria-current', 'step'); else link.removeAttribute('aria-current');
   }});
-  document.getElementById('counter').textContent = `${{index + 1}} / ${{slides.length}}`;
+  const steps = stages[index].length;
+  document.getElementById('counter').textContent = `${{index + 1}} / ${{slides.length}}${{steps > 1 ? ` · Step ${{revealed[index] + 1}} / ${{steps}}` : ''}}`;
   document.getElementById('progress').style.width = `${{(index + 1) / slides.length * 100}}%`;
   document.getElementById('progressBar').setAttribute('aria-valuenow', index + 1);
-  document.getElementById('prev').disabled = index === 0;
-  document.getElementById('next').disabled = index === slides.length - 1;
-  document.getElementById('content').scrollTop = 0;
+  document.getElementById('prev').disabled = index === 0 && revealed[index] === 0;
+  document.getElementById('next').disabled = index === slides.length - 1 && revealed[index] === steps - 1;
   links[index].scrollIntoView({{ block: 'nearest' }});
 }}
-function go(i) {{
+function go(i, step = 0) {{
+  const previous = index;
   index = Math.max(0, Math.min(slides.length - 1, i));
-  history.replaceState(null, '', `#slide-${{index + 1}}`);
+  revealed[index] = Math.max(0, Math.min(stages[index].length - 1, step));
+  const suffix = revealed[index] ? `-step-${{revealed[index] + 1}}` : '';
+  history.replaceState(null, '', `#slide-${{index + 1}}${{suffix}}`);
   render();
+  if (previous !== index || revealed[index] === 0) document.getElementById('content').scrollTop = 0;
+  else stages[index][revealed[index]].scrollIntoView({{ block: 'nearest' }});
+}}
+function next() {{
+  if (revealed[index] < stages[index].length - 1) go(index, revealed[index] + 1);
+  else if (index < slides.length - 1) go(index + 1);
+}}
+function prev() {{
+  if (revealed[index] > 0) go(index, revealed[index] - 1);
+  else if (index > 0) go(index - 1, stages[index - 1].length - 1);
 }}
 function readHash() {{
-  const match = /^#slide-(\\d+)$/.exec(location.hash);
+  const match = /^#slide-(\\d+)(?:-step-(\\d+))?$/.exec(location.hash);
   index = match ? Math.max(0, Math.min(slides.length - 1, Number(match[1]) - 1)) : 0;
+  revealed[index] = match ? Math.max(0, Math.min(stages[index].length - 1, Number(match[2] || 1) - 1)) : 0;
   render();
 }}
-document.getElementById('prev').addEventListener('click', () => go(index - 1));
-document.getElementById('next').addEventListener('click', () => go(index + 1));
+document.getElementById('prev').addEventListener('click', prev);
+document.getElementById('next').addEventListener('click', next);
 document.addEventListener('keydown', event => {{
   if (event.altKey || event.ctrlKey || event.metaKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
-  if (['ArrowRight', 'PageDown'].includes(event.key)) {{ event.preventDefault(); go(index + 1); }}
-  if (['ArrowLeft', 'PageUp'].includes(event.key)) {{ event.preventDefault(); go(index - 1); }}
+  if (['ArrowRight', 'PageDown'].includes(event.key)) {{ event.preventDefault(); next(); }}
+  if (['ArrowLeft', 'PageUp'].includes(event.key)) {{ event.preventDefault(); prev(); }}
   if (event.key === 'Home') {{ event.preventDefault(); go(0); }}
-  if (event.key === 'End') {{ event.preventDefault(); go(slides.length - 1); }}
+  if (event.key === 'End') {{ event.preventDefault(); go(slides.length - 1, stages[slides.length - 1].length - 1); }}
 }});
 window.addEventListener('hashchange', readHash);
 readHash();
@@ -447,11 +628,16 @@ readHash();
 </body>
 </html>
 """
-    (ROOT / "tdd-presentation.html").write_text(page, encoding="utf-8")
+    output.write_text(page, encoding="utf-8")
 
 
 if __name__ == "__main__":
-    deck_title, deck_slides = read_slides()
-    export_ppt(deck_title, deck_slides)
-    export_html(deck_title, deck_slides)
-    print(f"Exported {len(deck_slides)} slides to tdd-presentation.pptx and tdd-presentation.html")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=SOURCE)
+    parser.add_argument("--output", type=Path, default=ROOT / "tdd-presentation", help="Output basename without extension")
+    parser.add_argument("--section-pages", action="store_true", help="One page per section, with +++ reveal steps within the page")
+    args = parser.parse_args()
+    deck_title, deck_slides = read_section_slides(args.source) if args.section_pages else read_slides(args.source)
+    export_ppt(deck_title, deck_slides, args.output.with_suffix(".pptx"), args.source)
+    export_html(deck_title, deck_slides, args.output.with_suffix(".html"), args.source)
+    print(f"Exported {len(deck_slides)} slides to {args.output}.pptx and {args.output}.html")
