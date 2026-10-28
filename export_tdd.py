@@ -214,11 +214,30 @@ def inline(text: str) -> str:
     if url:
         return f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{html.escape(label)}</a>'
     value = html.escape(text)
+    value = re.sub(r"`([^`]+)`", r"<code>\1</code>", value)
     value = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", value)
     return re.sub(r"~~(.+?)~~", r"<del>\1</del>", value)
 
 
+def table_rows(block: str) -> list[list[str]] | None:
+    lines = block.strip().splitlines()
+    if len(lines) < 2 or not all(line.strip().startswith("|") for line in lines):
+        return None
+    rows = [[cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))] for line in lines]
+    if not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in rows[1]):
+        return None
+    rows.pop(1)
+    if any(len(row) != len(rows[0]) for row in rows):
+        raise ValueError("Inconsistent Markdown table columns")
+    return rows
+
+
 def block_html(block: str) -> str:
+    rows = table_rows(block)
+    if rows:
+        header = ''.join(f'<th scope="col">{inline(cell)}</th>' for cell in rows[0])
+        body = ''.join('<tr>' + ''.join(f'<td>{inline(cell)}</td>' for cell in row) + '</tr>' for row in rows[1:])
+        return f'<div class="table-scroll"><table><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table></div>'
     fenced = re.fullmatch(r"```([^\n]*)\n(.*?)\n?```", block.strip(), re.S)
     if fenced:
         return f'<pre class="source-code"><code class="language-{html.escape(fenced[1], quote=True)}">{html.escape(fenced[2])}</code></pre>'
@@ -376,6 +395,96 @@ def add_reveal_animations(slide, targets: dict[int, list[int]]) -> None:
     slide._element.append(parse_xml(timing))
 
 
+def table_geometry(rows, font_size, width):
+    columns = len(rows[0])
+    first = .48 if columns == 2 else .20 if columns == 3 else .12
+    widths = [width * first] + [width * (1-first) / (columns-1)] * (columns-1)
+    font = ImageFont.truetype("arial.ttf", font_size*4)
+    bold = ImageFont.truetype("arialbd.ttf", font_size*4)
+    heights = []
+    for row_number, row in enumerate(rows):
+        wrapped_lines = []
+        for col, cell in enumerate(row):
+            f = bold if row_number == 0 or "**" in cell else font
+            count, current = 1, ""
+            for word in clean(cell).split():
+                proposed = f"{current} {word}".strip()
+                if current and f.getlength(proposed) > (widths[col]-.08)*288:
+                    count += 1
+                    current = word
+                else:
+                    current = proposed
+            wrapped_lines.append(count)
+        heights.append(max(wrapped_lines) * font_size * 1.18 / 72 + .08)
+    return widths, heights
+
+
+def export_table_page(slide, item: Slide) -> dict[int, list[int]]:
+    """Keep complete tables and surrounding draft prose on one editable page."""
+    groups = item.stages or [item.blocks]
+    for size in range(16, 6, -1):
+        height = 0
+        for blocks in groups:
+            for block in blocks:
+                rows = table_rows(block)
+                if rows:
+                    height += sum(table_geometry(rows, size, 11.8)[1]) + .06
+                else:
+                    part = Slide(item.title, item.section, block, [block])
+                    height += body_height(part, max(size, 10), 11.74, True) + .035
+        if height <= 4.85:
+            break
+    else:
+        raise ValueError(f"Table cannot fit without losing content: {item.title}")
+    y = 1.95
+    targets: dict[int, list[int]] = {}
+    for stage, blocks in enumerate(groups):
+        for block in blocks:
+            rows = table_rows(block)
+            if rows:
+                widths, heights = table_geometry(rows, size, 11.8)
+                shape = slide.shapes.add_table(len(rows), len(rows[0]), Inches(.75), Inches(y), Inches(11.8), Inches(sum(heights)))
+                table = shape.table
+                table.first_row = True
+                for col, width in enumerate(widths):
+                    table.columns[col].width = Inches(width)
+                for r, (row, height) in enumerate(zip(rows, heights)):
+                    table.rows[r].height = Inches(height)
+                    for c, value in enumerate(row):
+                        cell = table.cell(r, c)
+                        cell.margin_left = cell.margin_right = Inches(.04)
+                        cell.margin_top = cell.margin_bottom = Inches(.04)
+                        cell.vertical_anchor = MSO_ANCHOR.TOP
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = RGBColor.from_string(PANEL if r == 0 or r % 2 == 0 else BG)
+                        p = cell.text_frame.paragraphs[0]
+                        p.text = clean(value)
+                        p.font.name = "Arial"
+                        p.font.size = Pt(size)
+                        p.font.bold = r == 0 or "**" in value
+                        p.font.color.rgb = RGBColor.from_string(FG)
+                        p.line_spacing = 1.1
+                        p.space_before = p.space_after = Pt(0)
+                y += sum(heights) + .06
+            else:
+                part = Slide(item.title, item.section, block, [block])
+                font_size = max(size, 10)
+                height = body_height(part, font_size, 11.74, True) + .035
+                shape = textbox(slide, .75, y, 11.8, height, "", font_size)
+                for n, (text, url, raw, _) in enumerate(body_lines(part)):
+                    p = shape.text_frame.paragraphs[0] if n == 0 else shape.text_frame.add_paragraph()
+                    p.text = text
+                    p.font.name = "Arial"
+                    p.font.size = Pt(font_size)
+                    p.font.color.rgb = RGBColor.from_string(FG)
+                    p.line_spacing = 1.05
+                    p.space_before = p.space_after = Pt(0)
+                y += height
+            if stage:
+                targets.setdefault(stage, []).append(shape.shape_id)
+    return targets
+
+
 def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-presentation.pptx", source: Path = SOURCE) -> None:
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
@@ -389,7 +498,9 @@ def export_ppt(title: str, slides: list[Slide], output: Path = ROOT / "tdd-prese
         textbox(slide, .7, .3, 11.9, .4, item.section, 12, MUTED)
         textbox(slide, .7, .85, 11.9, 1.05, item.title, 34, bold=True)
         reveal_targets: dict[int, list[int]] = {}
-        if item.diagram:
+        if any(table_rows(block) for block in item.blocks):
+            reveal_targets = export_table_page(slide, item)
+        elif item.diagram:
             _, prose = separate_code(item)
             has_prose = bool(prose.blocks)
             if has_prose:
@@ -532,6 +643,12 @@ def export_html(title: str, slides: list[Slide], output: Path = ROOT / "tdd-pres
   .comparison li li { font-weight: normal; }
   .dense { font-size: .85em; }
   .source-code { font-family: Consolas, monospace; font-size: 14px; line-height: 1.45; white-space: pre; overflow-x: auto; padding: 16px; background: #0b0d12; border-left: 3px solid #4aa3ff; }
+  .table-scroll { overflow-x: auto; margin-block: 1em; }
+  .slide table { border-collapse: collapse; width: 100%; font-size: .8em; line-height: 1.4; }
+  .slide th, .slide td { border: 1px solid #2a2f3a; padding: .65em .8em; text-align: left; vertical-align: top; }
+  .slide th { background: #151922; }
+  .slide td:first-child { min-width: 9em; }
+  .slide td code { font-size: .9em; }
   .diagram-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 24px; align-items: start; }
   .reveal[hidden] { display: none !important; }
   .staged-comparison { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 28px; }

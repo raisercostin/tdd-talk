@@ -1,6 +1,7 @@
 # Acts
 
 - [ ] `act01` Create TDD presentation #contains/act01/act02 #contains/act01/act03 #contains/act01/act04 #contains/act01/act05 #status/open
+  - [x] `act10` Export current tdd6 draft to HTML and PowerPoint #status/closed
   - [x] `act09` Toggle the HTML presentation header and footer #status/closed
   - [x] `act08` Toggle the HTML presentation outline beside Prev #status/closed
   - [x] `act07` Export tdd5 talk with same-page reveal steps #status/closed
@@ -63,6 +64,12 @@
 - 2026-10-28T12:17:48+02 #actor/actor01 started duration="PT2H" expires-unix="1793189868"
 - 2026-10-28T12:25:35+02 #actor/actor01 closed reason="Added independent header/footer visibility button and persistent restore controls, verified all visibility combinations on desktop and mobile and navigation while hidden"
 
+### act10
+- 2026-10-28T12:38:27+02 #actor/actor01 created title="Export current tdd6 draft to HTML and PowerPoint"
+- 2026-10-28T12:38:27+02 #actor/actor01 moved parent="act01"
+- 2026-10-28T12:45:02+02 #actor/actor01 started duration="PT4H" expires-unix="1793198702"
+- 2026-10-28T12:48:49+02 #actor/actor01 closed reason="Generated latest tdd6-talk.html and tdd6-talk.pptx with 41 pages and 48 steps, checked current source notes, PowerPoint package and HTML startup"
+
 ## Graph
 
 | Relation | From | To |
@@ -75,6 +82,7 @@
 | `contains` | `act01` | `act07` |
 | `contains` | `act01` | `act08` |
 | `contains` | `act01` | `act09` |
+| `contains` | `act01` | `act10` |
 
 ```mermaid
 flowchart LR
@@ -87,6 +95,7 @@ flowchart LR
   act07["act07 Export tdd5 talk with same-page reveal steps"]
   act08["act08 Toggle the HTML presentation outline beside Prev"]
   act09["act09 Toggle the HTML presentation header and footer"]
+  act10["act10 Export current tdd6 draft to HTML and PowerPoint"]
   act01 -->|contains| act02
   act01 -->|contains| act03
   act01 -->|contains| act04
@@ -95,4 +104,5 @@ flowchart LR
   act01 -->|contains| act07
   act01 -->|contains| act08
   act01 -->|contains| act09
+  act01 -->|contains| act10
 ```

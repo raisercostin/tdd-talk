@@ -550,16 +550,69 @@ As you pointed out earlier, **changing assertions, snapshots or test setup is no
 4. **If the expectation changes, what did we learn that justifies it?**
 
 ## 4. Beyond TDD
-
 > Testing Approaches and Trade-offs: Test-at-end, acceptance testing, BDD, internal testing, mocking libraries and UI testing, including their benefits, costs and potential pitfalls.
+> Choosing useful boundaries, getting meaningful evidence and keeping testing affordable
 
-#### Testign Myths
+++
 
-- We have a battery of tests and on mutation we can pinpoint the mutation by just looking at the tests. With what price? In writing tests and in maintaining them?
-- Test coverage will help. Maybe if 100%, and maybe if we also have 100% branch coverage. That is not practical and rarely achievable. So we need strategic testing. Top down?
+**Many frustrations attributed to TDD come from broader choices about what we test, where we test it and how we organize testing.** Section 3 examines RED-GREEN-REFACTOR; section 4 examines those choices and their costs.
+
+
+### 4.1 What are we trying to learn?
+
+- Does the required behavior work?
+- Do the components work together?
+- Is the application correctly configured and deployed?
+- When something fails, how much help do we need locating the cause?
+- Separation of infrastructure and domain
+
+Different questions can justify different tests.
+
+### 4.2 Where should we test?
+
+- **Domain facade:** many focused behavior tests, without starting servers or crossing the network.
+- **Infrastructure and adapters:** focused tests for persistence, serialization, security mechanisms and other technical responsibilities.
+- **End-to-end paths:** a few representative tests establishing that the assembled system works across boundaries.
+- Test important interactions between these responsibilities, without repeating every domain scenario through the entire stack.
+
+### 4.3 Approaches and their costs
+
+| Choice | Useful when | Can become a burden when |
+|---|---|---|
+| **Test-at-end** | Exploration helps establish what to build and verify. | Feedback arrives late and the design is expensive to exercise. |
+| **Acceptance tests / BDD** | Examples clarify requirements and create shared understanding. | Developers maintain a second language or DSL that intended collaborators do not use. |
+| **Internal tests** | A component has a meaningful contract or complex behavior worth testing directly. | Every implementation detail becomes a permanent test contract. |
+| **Mocks** | We need controlled responses or failures at a boundary. | Tests mostly verify their own configured answers or internal call sequences. |
+| **UI tests** | We need evidence about actual user interactions. | Every business-rule variation is tested through a slow, fragile UI path. |
+
+### 4.4 Testing myths
+
+- **"A failing test should pinpoint the exact faulty method."**  
+  Precise diagnosis is useful, but what does that precision cost in test creation, coupling and maintenance? Fast feedback, recent changes, logs and debugging also help locate defects.
+
+- **"High coverage means good tests."**  
+  Coverage shows what was executed. Even 100% line and branch coverage does not establish meaningful assertions or cover every combination of inputs and states. Use it to investigate gaps.
+
+- **"Everything should be tested end to end."**  
+  Full paths provide useful evidence, but repeating every scenario through them can make feedback unnecessarily expensive.
+
+- **"More tests mean more confidence."**  
+  Ask what additional failure each test can detect and whether that value justifies its cost.
+
+### 4.5 Practical testing
+
+Which combination of tests provides the evidence we need, at a cost we can sustain?
+
+### 4.6 See Ian Cooper
+
+Where Did It All Go Wrong:
+
+- https://www.google.com/search?q=TDD%2C+Where+Did+It+All+Go+Wrong&sourceid=chrome&ie=UTF-8&source=chrome.ctxt
+- TDD, Where Did It All Go Wrong (Ian Cooper) - https://www.youtube.com/watch?v=EZ05e7EMOLM
+- https://www.reddit.com/r/programming/comments/21fhy7/ian_cooper_tdd_where_did_it_all_go_wrong/
+- https://archive.org/details/est-driven-development-by-example/test-driven-development-by-example/
 
 ## 5. Complementing Practices
-> XP, pair programming, trunk-based development, DDD, hexagonal architecture, clean code, and design principles such as DRY, OCP and SRP.
 
 #### Things that go well with TDD
 
@@ -574,6 +627,52 @@ As you pointed out earlier, **changing assertions, snapshots or test setup is no
   - A refactor keeps the tests green.
   - We are free to change the implementation details if the tests are green.
 
+## 5. Practices That Complement TDD
+> XP, pair programming, trunk-based development, DDD, hexagonal architecture, clean code, and design principles such as DRY, OCP and SRP.
+> **Practices that help TDD work well, and practices that TDD makes easier**.
+
+### 5.1 XP and pair programming
+
+- TDD fits within XP's short feedback loops, simple design and continuous integration.
+- Pairing helps challenge assumptions, choose useful examples and review design decisions.
+
+### 5.2 DDD and hexagonal architecture
+
+- Domain language makes tests express meaningful behavior.
+- A facade or port provides a boundary through which tests exercise the domain.
+- Encapsulation lets the implementation evolve behind that boundary.
+- Infrastructure can be tested separately, with representative tests covering its connection to the domain.
+
+### 5.3 Persistence choices
+
+- Use in-memory structures, an embedded database or a real database according to the behavior being tested.
+- A real database can let domain scenarios exercise SQL, mappings and constraints too.
+- Keep setup fast and state isolated.
+- Substitutes need care: in-memory structures or a different database engine do not necessarily preserve production persistence semantics.
+
+### 5.4 Clean code and refactoring
+
+- Refactor both production code and test code.
+- Use testability and readability as feedback about responsibilities and interfaces.
+- Keep relevant tests green while changing implementation details.
+- If a behavior-preserving change repeatedly breaks tests, inspect their coupling.
+
+### 5.5 Design principles
+
+- **SRP:** identify coherent responsibilities with understandable contracts.
+- **DRY:** remove duplicated knowledge and maintenance effort; preserve clarity in individual tests.
+- **OCP:** use stable abstractions where they help accommodate variation. Avoid speculative extension points.
+- **YAGNI:** introduce abstractions and capabilities when there is a concrete need.
+- **Encapsulation:** test observable behavior without exposing internals solely for testing.
+
+### 5.6 Trunk-based development and continuous integration
+
+- Small changes make failures easier to understand.
+- Fast, reliable tests support frequent integration.
+- A shared green baseline helps developers and agents change code with confidence.
+
+### But remember the XP Practices
+![xp practices](xp-practices.png)
 
 ## 6. Questions, experiences, next sessions
 > Questions and experiences from your own projects are very welcome, including those situations where tests may have caused more headaches than help.
